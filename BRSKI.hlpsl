@@ -1,99 +1,167 @@
-%%Protocol : BRSKI
+%% PROTOCOL*: Bootstrapping RemoteSecure Key Infrastructures (BRSKI)
+%% PURPOSE: (BRSKI) protocol provides a solution for a resource-constrained 
+%	     new device to automatically onboard the correct network in a secure manner.
+%	     BRSKI specification refers the new device as 'pledge'. 
+%	     Protocol aims to establish a trusted relationship between pledge and the 
+%	     network operator/owner referred as 'registrar' in such a way so that 
+%	     they can assure and authenticate each other's identity. This is done using
+%	     a singed 802.1AR iDevID cert which is installed into the device 
+%	     by the manufacturer during the manufacturing process. The iDevID cert indicates 
+%	     the manufacturer of the device, serial number of the device and type of the device.
+%	     Manufacturer also installs a trust anchor of manufacturer's authorized signing authority
+%	     (known as MASA) at compile time using which it can trust and verify the 'MASA'.
+
+
+%%
+%% REFERENCE: https://tools.ietf.org/pdf/draft-ietf-anima-bootstrapping-keyinfra-41.pdf
+%% MODELER:
+%% \begin{itemize}
+%% \item Author1
+%% \item Author2
+%% \item Author3
+%% \end{itemize}
+%%
+%% ALICE_BOB:
+%% \begin{verbatim}
+%% Let P,R,M respectively represnts the pledge, registrar and MASA.
+%% Kp,Kr,Km represents their public key and kca denotes the public key of certificate authority.
+
+%%
+%% P --> R : P.Na.Sid.Pa		[Pledge_hello (Part of TLS handshake)]
+%% R --> P : Nb.Sid.Pa.{R.Kr}_inv(Kca)	[Registrar_hello (Part of TLS handshake)]
+%% P --> R : {Pms}_Kr.{Sn.Issuer.Sln.Aki.Kp}_inv(Km).{Finishedp}_ClientKp	[Pledge_key_exchange (Part of TLS handshake)]
+%%	  Mp : PRF(Pms.Na.Nb)
+%%	  Finishedp : PRF(Mp.P.R.Na.Pa.Sid)
+%%	  ClientKp  : KeyGen(P.Na.Nb.Mp)
+%%	  ServerKp  : KeyGen(R.Na.Nb.Mp)
+%% R --> P : {Finishedp}_ServerKp	[Registrar_key_exchange (Part of TLS handshake)]
+%% P --> R : {signed Pledge_voucher_request}_ClientKp
+%%	  Pledge_voucher_rquest : {Assr'.Np'.Sn.Crdate'.{R.Kr}_inv(Kca)}_(inv(Kp))
+%% R --> M : R.Nc.Sidm.Pam		[Registrar_hello (Part of TLS handshake)]
+%% M --> R : Nd.Sidm.Pam.{M.Km}_inv(Kca)	[MASA_hello (Part of TLS handshake)]
+%%	  Masa certificate ={M.Km}_inv(Kca)
+%% R --> M : {Pmsm}_Kr.{R.Kr}_inv(Kca).{Finishedm}_ClientKm [Registrar_key_exchange (Part of TLS handshake)]
+%%	  Mm : PRF(Pmsm.Nc.Nd)
+%%	  Finishedm : PRF(Mm.R.M.Nc.Pam.Sidm)
+%%	  ClientKm  : KeyGen(R.Nc.Nd.Mm)
+%%	  ServerKm  : KeyGen(M.Nc.Nd.Mm)
+%% M --> R : {Finishedm}_Serverm		[MASA_key_exchange (Part of TLS handshake)]
+%% R --> M : {signed registrar_voucher_request}_ClientKm
+%%	  registrar_voucher_request = {Assr.Np.Sn.Rcrdate'.Issuer.Prior-signed pledge_voucher_request}
+%% M --> R : {signed Voucher}_ServerKm
+%%	  voucher = {Assr.Np.Sn.{R.Kr}_inv(Kca)}
+%% R --> P : {signed voucher}_ServerKp
+%% \end{verbatim}
+%% LIMITATIONS:
+%%\begin{itemize}
+%% \item This formalisation is based on the abstracted version of BRSKI 
+%% presented by in https://tools.ietf.org/pdf/draft-ietf-anima-bootstrapping-keyinfra-41.pdf. 
+%% \item We do consider nonceless voucher request in this modelling.
+%%\end{itemize}
+%% PROBLEMS: 3
+%% ATTACKS: None
+%% NOTES:
+%% To initiate the bootstarping process, the pledge sends the iDevID as part of TLS session 
+%% and establish a provisional TLS connection through a joint proxy. Once the provisional 
+%% TLS connection is established pledge sends a signed voucher-request to the registrar 
+%% which includes the information about the pledge such as assertion(Assr), nonce(Np),
+%% serial-number(Sn), created-on(Crdate), proximity-registrar-cert.
+%% While receiving the pledge voucher-request registrar determines if it is 
+%% expecting such device if yes then it locates the device's MASA and sends MASA 
+%% a signed registrar voucher-request that contains the entire pledge voucher-request.
+%% The registrar's voucher-request includes following information: assertion(Assr), nonce(Np),
+%% serial-number(Sn), created-on(Crdate) from the pledge voucher-request, idevid-issuer(Issuer)
+%% from the iDevID certificate and entire pledge voucher-request in prior-signed-voucher-request field.
+%% Then MASA checks its record with respect to the provided device serial number in the voucher-request.
+%% if the voucher-request is accepted, a voucher is issued. Voucher contains assertion(Assr), 
+%% nonce(Np), serial-number(Sn) and pinned-domain-cert. Registrar redeems the voucher by passing 
+%% it to the pledge. Pledge validates the signed voucher using the pre-installed \textit{MASA}'s trust anchor.
+%% The pledge also verifies the registrar using the pinned-domain cert and completes the authentication of 
+%% provisional TLS connection. The pledge returns a voucher telemetry status indicating voucher acceptance status.
 
 %% HLPSL:
 
-role pledge (P, R, M, CA    : agent,
+role pledge (P, R, M        : agent,
 	     Kr, Km, Kca    : public_key,
 	     KeyGen, PRF    : hash_func,
-	     Sn      	    : text, %serial Number 
-         Issuer    	    : text,
-         Aki	    	: text,  %authorityKeyIdentifier
-         Sln	    	: text,  %subjectAltName	
-         Msn       	    : text,  %MASASerialNumber
-         Maki	    	: text,  %MASAauthorityKeyIdentifier
-         Mski	    	: text,  %MASAsubjectKeyIdentifier
-  	     Msln      	    : text,  %MASAsubjectAltName
-         SND_R, RCV_R, SND_M, RCV_M   : channel (dy))
+	     Sn      	    : text, %devID serial Number 
+             Issuer    	    : text, %devID issuer
+             Aki	    : text, %devID authorityKeyIdentifier
+             Sln	    : text, %devID subjectAltName	
+             SND_R, RCV_R, SND_M, RCV_M   : channel (dy))
 played_by P def=
 
+local	Np, Na, Nb, Assr, Pms, Sid, Pa : text,
+	Crdate                         : text,
+	State                          : nat,
+	Kp                             : public_key,
+	Finishedp	    : hash(hash(text.text.text).agent.agent.text.text.text),
+        ClientKp, ServerKp  : hash(agent.text.text.hash(text.text.text)),
+        Mp		    : hash(text.text.text)
 
-  local  Np, Na, Nb, Assr, Pms, Sid, Pa : text,
-  Crdate                         : text,
-  Prcert			        : text,
-  State                          : nat,
-  Kp                             : public_key,
-  Finishedp: hash(hash(text.text.text).agent.agent.text.text.text),
-  ClientKp, ServerKp: hash(agent.text.text.hash(text.text.text)),
-  Mp: hash(text.text.text)
+const sec_np_pr, auth_np, auth_sn, auth_na_nb, auth_reg_cert, auth_na_nb2, auth_idev, auth_reg_certchain, tls_pledgek, tls_registrark : protocol_id%,
 
-  const nps1, nps2, sec_sn, sec_np_pr, auth_np, auth_sn, auth_reg_cert, auth_reg_cert1, auth_reg_cert2, auth_srl, auth_idev, auth_domid, auth_reg_certchain, tls_pledgek, tls_registrark : protocol_id
   init State := 0
 
   transition
+
  0. State  = 0 /\ RCV_R(start) =|>
     State':= 2 
 	/\ Na' := new()
 	/\ Pa' := new()
-    /\ Sid' := new()
-    /\ SND_R(P.Na'.Sid'.Pa')
+	/\ Sid' := new()
+	/\ SND_R(P.Na'.Sid'.Pa')
 
 
  2. State  = 2 /\ RCV_R(Nb'.Sid.Pa.{R.Kr'}_inv(Kca)) =|>
-     State':= 4 /\ Pms' := new()
-		/\ Mp' := PRF(Pms'.Na.Nb')
+    State':= 4 /\ Pms' := new()
+	/\ Mp' := PRF(Pms'.Na.Nb')
         /\ Finishedp' := PRF(Mp'.P.R.Na.Pa.Sid)
         /\ ClientKp' := KeyGen(P.Na.Nb'.Mp')
         /\ ServerKp' := KeyGen(R.Na.Nb'.Mp')
-        /\ SND_R({Pms'}_(Kr).{Sn.Issuer.Sln.Aki.Kp}_inv(Km).{Msn.Issuer.Mski.Msln.Maki.Km}_inv(Km).{Finishedp'}_ClientKp') 
-		/\ secret(Pms,sec_np_pr,{P,R})
-		/\ witness(P,R,auth_reg_cert,Na.Nb')%% so that registrar can authenticate pledge on {R.Kr'}_inv(Kca)
-		/\ secret(ClientKp,tls_pledgek,{P,R})
+        /\ SND_R({Pms'}_(Kr).{Sn.Issuer.Sln.Aki.Kp}_inv(Km).{Finishedp'}_ClientKp') 
+	/\ secret(ClientKp,tls_pledgek,{P,R})
         /\ secret(ServerKp,tls_registrark,{P,R})
-        /\ witness(P,M,auth_idev,Sn.Mski) %Masa can authenticate pledge on serialNumber
+	
+	/\ witness(P,R,auth_na_nb,Na.Nb')%% so that registrar can authenticate pledge on {R.Kr'}_inv(Kca)
+	/\ witness(P,M,auth_idev,Sn) %Masa can authenticate pledge on serialNumber
+
 
   4. State  = 4 /\ RCV_R( {PRF(PRF(Pms.Na.Nb).P.R.Na.Pa.Sid)}_KeyGen(R.Na.Nb'.PRF(Pms.Na.Nb))) =|>
      State':= 6 /\ Np'   := new()
-        /\ Assr' := new()
-  		/\ Crdate' := new()
-  		/\ SND_R({{Assr'.Np'.Sn.Crdate'.{R.Kr}_inv(Kca)}_(inv(Kp))}_(KeyGen(P.Pms.Na.Nb')) ) 
-		/\ secret(Np,sec_np_pr,{P,R})
-		/\ request(P,R,auth_reg_cert2,Na.Nb)
-		/\ witness(P,R,auth_reg_cert1,{R.Kr}_inv(Kca))%% so that registrar can authenticate pledge on {R.Kr'}_inv(Kca)
+	/\ Assr' := new()
+	/\ Crdate' := new()
+	/\ SND_R({{Assr'.Np'.Sn.Crdate'.{R.Kr}_inv(Kca)}_(inv(Kp))}_(KeyGen(P.Pms.Na.Nb')) ) 
+	/\ secret(Np,sec_np_pr,{P,R})
+	/\ request(P,R,auth_na_nb2,Na.Nb)
+	/\ witness(P,R,auth_reg_cert,{R.Kr}_inv(Kca))%% so that registrar can authenticate pledge on {R.Kr'}_inv(Kca)
 
-  6. State  = 6 /\ RCV_R({{Assr'.Np.Sn.{R.Kr'}_inv(Kca).{CA.Kca'}_inv(Kca)}_(inv(Km))}_(KeyGen(R.Pms'.Na.Nb'))) =|> 
+  6. State  = 6 /\ RCV_R({{Assr'.Np.Sn.{R.Kr'}_inv(Kca)}_(inv(Km))}_(KeyGen(R.Pms'.Na.Nb'))) =|> 
      State':= 8 /\ request(P,R,auth_reg_certchain,{R.Kr'}_inv(Kca))
-		  /\ request(P,M,auth_np,Np)
-		  /\ request(P,M,auth_sn,Sn)
+	/\ request(P,M,auth_np,Np)
+	/\ request(P,M,auth_sn,Sn)
 
 end role
 
-
-role registrar (P, R, M, CA     : agent,
-           	Kr, Km, Kca     : public_key,
+role registrar (P, R, M     : agent,
+		Kr, Km, Kca     : public_key,
    	     	KeyGen, PRF    : hash_func,
 	     	SND_P, RCV_P, SND_M, RCV_M  : channel (dy))
 played_by R def=
 
-  local  Assr, Np, Na, Nb, Nc, Nd,  Pms, Pmsm, Sid, Pa, Sidm, Pam  : text,
-	 Secretprc,Secretprs,Secretrmc,Secretrms	: hash(agent.text.text.text),
-         Finished,Finishedrm			: hash(text.text.text),
-         Sn, Crdate, Rcrdate            : text,
-		 Prcert			        : text,
-	     Domainid 		        : text,
-	     State                          : nat,
-         Kp                             : public_key,
-         Issuer   : text,
-         Aki	 : text,  %authorityKeyIdentifier
-         Sln	 : text,  %subjectAltName
-         Msn       : text,  %MASASerialNumber
-         Maki	  : text,  %MASAauthorityKeyIdentifier
-         Mski	  : text,  %MASAsubjectAltName
-	     Msln      : text,   %MASAsubjectKeyIdentifier
-         Finishedp, Finishedr : hash(hash(text.text.text).agent.agent.text.text.text),
-         ClientKp, ServerKp, ClientKr, ServerKr: hash(agent.text.text.hash(text.text.text)),
-	     Mr: hash(text.text.text)
+  local Assr, Np, Na, Nb, Nc, Nd,  Pms, Pmsm, Sid, Pa, Sidm, Pam  : text,
+	Sn, Crdate, Rcrdate     : text,
+	State	: nat,
+	Kp	: public_key,
+	Issuer	: text,
+	Aki	: text,  %authorityKeyIdentifier
+	Sln	: text,  %subjectAltName
+	Finishedp, Finishedm	: hash(hash(text.text.text).agent.agent.text.text.text),
+	ClientKp, ServerKp, ClientKm, ServerKm: hash(agent.text.text.hash(text.text.text)),
+	Mm	: hash(text.text.text)
 
-  const sec_np_rm, nps2, auth_reg_cert, auth_reg_cert1, auth_np, auth_np1, auth_reg_cert3, auth_reg_certchain, auth_srl, auth_tls_cert, sec_tls_rm , tls_registrarrmk, tls_masarmk, auth_idevr: protocol_id
+
+  const sec_np_rm, auth_na_nb, auth_na_nb2, auth_reg_cert, auth_np, auth_np1, auth_nc_nd, auth_reg_certchain, auth_nc_nd2, tls_registrarrmk, tls_masarmk: protocol_id%,
  
   init State := 1
 
@@ -101,193 +169,170 @@ played_by R def=
 
   1. State  = 1 /\ RCV_P(P.Na'.Sid'.Pa') =|>
      State':= 3 /\ Nb' := new() 
-    /\ SND_P(Nb'.Sid'.Pa'.{R.Kr}_inv(Kca))
-     /\ witness(R,P,auth_reg_cert2,Na'.Nb')
+	/\ SND_P(Nb'.Sid'.Pa'.{R.Kr}_inv(Kca))
+	/\ witness(R,P,auth_na_nb2,Na'.Nb')
     
   3. State  = 3 
-	/\ RCV_P({Pms'}_Kr.{Sn'.Issuer'.Sln'.Aki'.Kp'}_(inv(Km)).{Msn'.Issuer'.Mski'.Msln'.Maki'.Km}_inv(Km).{Finishedp'}_ClientKp') 
+	/\ RCV_P({Pms'}_Kr.{Sn'.Issuer'.Sln'.Aki'.Kp'}_(inv(Km)).{Finishedp'}_ClientKp') 	
 	/\ Finishedp = PRF(PRF(Pms'.Na.Nb').P.R.Na.Pa.Sid)
 	/\ ClientKp = KeyGen(P.Na.Nb'.PRF(Pms'.Na.Nb'))=|>
 
      State':= 9 
 	/\ ServerKp' := KeyGen(R.Na.Nb'.PRF(Pms'.Na.Nb'))
-    /\ SND_P( {PRF(PRF(Pms'.Na.Nb').P.R.Na.Pa.Sid)}_KeyGen(R.Na.Nb'.PRF(Pms'.Na.Nb')) )
-    /\ request(R,P,auth_reg_cert,Na.Nb) %%%%check registrar cert to authenticate pledge
+	/\ SND_P( {PRF(PRF(Pms'.Na.Nb').P.R.Na.Pa.Sid)}_KeyGen(R.Na.Nb'.PRF(Pms'.Na.Nb')) )
+        /\ request(R,P,auth_na_nb,Na.Nb) %%%%check registrar cert to authenticate pledge
  
  9. State  = 9 
      /\ RCV_P({{Assr'.Np'.Sn.Crdate'.{R.Kr'}_inv(Kca)}_(inv(Kp))}_(KeyGen(P.Pms'.Na.Nb'))) =|>
      State':= 11 
-   	/\ Nc' := new() 
-    /\ Pam' := new()
-    /\ Sidm' := new()
-    /\ SND_M(R.Nc'.Sidm'.Pam')
-
+	/\ Nc' := new() 
+	/\ Pam' := new()
+	/\ Sidm' := new()
+	/\ SND_M(R.Nc'.Sidm'.Pam')
+     
  11. State  = 11 
-     /\ RCV_M(Nd'.Sidm'.Pam'.{M.Km}_inv(Kca)) =|> 
+     /\ RCV_M(Nd'.Sidm'.Pam'.{M.Km}_inv(Kca)) =|> %Nd'.Sidm'.Pam'.{M.Km}_inv(Kca)
      State':= 13 
-
 	/\ Pmsm' := new()
-	/\ Mr' := PRF(Pmsm'.Nc.Nd')
-	/\ Finishedr' := PRF(Mr'.R.M.Nc.Pam.Sidm)
-	/\ ClientKr' := KeyGen(R.Nc.Nd'.Mr')
-	/\ ServerKr' := KeyGen(M.Nc.Nd'.Mr')
+	/\ Mm' := PRF(Pmsm'.Nc.Nd')
+	/\ Finishedm' := PRF(Mm'.R.M.Nc.Pam.Sidm)
+	/\ ClientKm' := KeyGen(R.Nc.Nd'.Mm')
+	/\ ServerKm' := KeyGen(M.Nc.Nd'.Mm')
 
-	/\ SND_M({Pmsm'}_(Km).{R.Kr}_inv(Kca).{Finishedr'}_ClientKr') 
-	/\ secret(Pmsm,sec_tls_rm,{R,M})
-	/\ witness(R,M,auth_tls_cert,Nc.Nd')%% so that registrar can authenticate pledge on {R.Kr'}_inv(Kca)
-	/\ secret(ClientKr,tls_registrarrmk,{R,M})
-	/\ secret(ServerKr,tls_masarmk,{R,M})
+	/\ SND_M({Pmsm'}_(Km).{R.Kr}_inv(Kca).{Finishedm'}_ClientKm') 
+	/\ witness(R,M,auth_nc_nd2,Nc.Nd')%% so that registrar can authenticate pledge on {R.Kr'}_inv(Kca)
+	/\ secret(ClientKm,tls_registrarrmk,{R,M})
+	/\ secret(ServerKm,tls_masarmk,{R,M})
+
 
  13. State  = 13 
-     /\ RCV_M({PRF(PRF(Pmsm'.Nc'.Nd').R.M.Nc'.Pam.Sidm)}_KeyGen(M.Nc'.Nd'.PRF(Pmsm'.Nc'.Nd'))) =|>
+      /\ RCV_M({PRF(PRF(Pmsm'.Nc'.Nd').R.M.Nc'.Pam.Sidm)}_KeyGen(M.Nc'.Nd'.PRF(Pmsm'.Nc'.Nd'))) =|>
      State':= 15 
-     /\ Rcrdate':= new() 
-     /\ Domainid' := Mski
-     /\ SND_M({{Assr.Np.Sn.Rcrdate'.Issuer.({Assr.Np.Sn.Crdate.{R.Kr}_inv(Kca)}_(inv(Kp)))}_(inv(Kr)).Mski.{R.Kr}_inv(Kca).{CA.Kca}_inv(Kca)}_KeyGen(R.Pmsm'.Nc.Nd'))
-     /\ secret(Np,sec_np_rm,{R,M})
-     /\ request(R,P,auth_reg_cert1,{R.Kr}_inv(Kca)) %%%%check registrar cert to authenticate pledge
-     /\ request(R,M,auth_idevr,Sn.Mski)
+	/\ Rcrdate':= new() 
+	/\ SND_M({{Assr.Np.Sn.Rcrdate'.Issuer.({Assr.Np.Sn.Crdate.{R.Kr}_inv(Kca)}_(inv(Kp)))}_(inv(Kr)).{R.Kr}_inv(Kca)}_KeyGen(R.Pmsm'.Nc.Nd'))     
+	/\ secret(Np,sec_np_rm,{R,M})
+	/\ request(M,R,auth_nc_nd,Nc.Nd)
+	/\ request(R,P,auth_reg_cert,{R.Kr}_inv(Kca)) %%%%check registrar cert to authenticate pledge
+	
+	
+ 15. State  = 15 
+     /\ RCV_M({{Assr'.Np'.Sn'.{R.Kr'}_inv(Kca)}_(inv(Km))}_KeyGen(M.Pmsm'.Nc.Nd')) =|>
+     State':= 17 /\ SND_P({{Assr'.Np'.Sn'.{R.Kr'}_inv(Kca)}_(inv(Km))}_(KeyGen(R.Pms.Na.Nb)))
+	/\ witness(R,P,auth_reg_certchain,{R.Kr'}_inv(Kca))
 
-  15. State  = 15 
-     /\ RCV_M({{Assr'.Np'.Sn'.{R.Kr'}_inv(Kca).{CA.Kca'}_inv(Kca)}_(inv(Km))}_KeyGen(M.Pmsm'.Nc.Nd')) =|>
-     State':= 17 /\ SND_P({{Assr'.Np'.Sn'.{R.Kr'}_inv(Kca).{CA.Kca'}_inv(Kca)}_(inv(Km))}_(KeyGen(R.Pms.Na.Nb)))
-                 /\ witness(R,P,auth_reg_certchain,{R.Kr'}_inv(Kca))
- 
 end role
 
-role masa (P, R, M, CA  : agent,
+role masa (P, R, M  : agent,
 	   Km, Kp, Kca  : public_key,
-   	   KeyGen, PRF  : hash_func,
-	   Sn      		: text, %serial Number 
-       Issuer    	: text,
-       Aki	        : text,  %authorityKeyIdentifier
-       Sln	    	: text,  %subjectAltName	
-       Msn       	: text,  %MASASerialNumber
-       Maki	    	: text,  %MASAauthorityKeyIdentifier
-       Mski	    	: text,  %MASAsubjectKeyIdentifier
-  	   Msln      	: text,  %MASAsubjectAltName
+   	   KeyGen, PRF    : hash_func,
+	   Sn      	: text, %serial Number 
+           Issuer    	: text,
+           Aki	        : text,  %authorityKeyIdentifier
+           Sln	    	: text,  %subjectAltName	
 	   SND_R, RCV_R, SND_P, RCV_P   : channel (dy))
 played_by M def=
 
   local SeID, Assr , Np, Nc, Nd, Pmsm, Sidm, Pam : text,
-    Crdate, Rcrdate     : text,
-	Prcert	            : text,
-	Domainid            : text,
+        Crdate, Rcrdate     : text,
 	State               : nat,
 	Kr 	            : public_key,
-	Finishedr: hash(hash(text.text.text).agent.agent.text.text.text),
-    ClientKr, ServerKr: hash(agent.text.text.hash(text.text.text))        
+	Finishedm: hash(hash(text.text.text).agent.agent.text.text.text),
+        ClientKm, ServerKm: hash(agent.text.text.hash(text.text.text))        
 
-  const nps2, auth_sn, auth_np, auth_np1, auth_idev,auth_idevr, auth_reg_certchain, auth_reg_cert1,auth_reg_cert3, auth_domid, auth_tls_cert  : protocol_id
+  const auth_sn, auth_np, auth_np1, auth_idev, auth_reg_certchain, auth_reg_cert1,auth_nc_nd, auth_nc_nd2  : protocol_id%,
+       
   init State := 5
 
   transition
- 
 
 1. State  = 5 
 	/\ RCV_R(R.Nc'.Sidm'.Pam') =|>     
 	State':= 7
-  	/\ Nd' := new() 
+     	/\ Nd' := new() 
 	/\ SND_R(Nd'.Sidm'.Pam'.{M.Km}_inv(Kca))
-   	/\ witness(M,R,auth_reg_cert3,Nc'.Nd')
+     	/\ witness(M,R,auth_nc_nd,Nc'.Nd')
 
 2. State  = 7 
-    /\ RCV_R({Pmsm'}_(Km').{R.Kr'}_inv(Kca).{Finishedr'}_ClientKr') 
-	/\ Finishedr = PRF(PRF(Pmsm'.Nc.Nd').R.M.Nc.Pam.Sidm)
-	/\ ClientKr = KeyGen(R.Nc.Nd'.PRF(Pmsm'.Nc.Nd'))=|>
-
+	/\ RCV_R({Pmsm'}_(Km').{R.Kr'}_inv(Kca).{Finishedm'}_ClientKm') 
+	/\ Finishedm = PRF(PRF(Pmsm'.Nc.Nd').R.M.Nc.Pam.Sidm)
+	/\ ClientKm = KeyGen(R.Nc.Nd'.PRF(Pmsm'.Nc.Nd'))=|>
      State':= 19
-	/\ ServerKr' := KeyGen(M.Nc.Nd'.PRF(Pmsm'.Nc.Nd'))
-    /\ SND_R( {PRF(PRF(Pmsm'.Nc.Nd').R.M.Nc.Pam.Sidm)}_KeyGen(M.Nc.Nd'.PRF(Pmsm'.Nc.Nd')) )
-    /\ request(M,R,auth_tls_cert,Nc.Nd) %%%%check registrar cert to authenticate pledge
+	/\ ServerKm' := KeyGen(M.Nc.Nd'.PRF(Pmsm'.Nc.Nd'))
+        /\ SND_R( {PRF(PRF(Pmsm'.Nc.Nd').R.M.Nc.Pam.Sidm)}_KeyGen(M.Nc.Nd'.PRF(Pmsm'.Nc.Nd')) )
+	/\ request(M,R,auth_nc_nd2,Nc.Nd) %%%%check registrar cert to authenticate pledge
      
 3. State  = 19 
-     /\ RCV_R({{Assr'.Np'.Sn.Rcrdate'.Issuer'.({Assr'.Np'.Sn.Crdate'.{R.Kr'}_inv(Kca)}_(inv(Kp')))}_(inv(Kr')).Mski.{R.Kr'}_inv(Kca).{CA.Kca'}_inv(Kca)}_KeyGen(R.Pmsm'.Nc.Nd')) =|>
-     State':= 21
-     /\ SND_R({{Assr'.Np'.Sn.{R.Kr'}_inv(Kca).{CA.Kca'}_inv(Kca)}_(inv(Km))}_KeyGen(M.Pmsm'.Nc.Nd'))
-     /\ witness(M,P,auth_np,Np')
-     /\ request(M,P,auth_idev,Sn.Mski) %Authenticating plegde on serialnumber
-     /\ witness(M,R,auth_idevr,Sn.Mski)
-     /\ witness(M,P,auth_sn,Sn) 
+	/\ RCV_R({{Assr'.Np'.Sn.Rcrdate'.Issuer'.({Assr'.Np'.Sn.Crdate'.{R.Kr'}_inv(Kca)}_(inv(Kp')))}_(inv(Kr')).{R.Kr'}_inv(Kca)}_KeyGen(R.Pmsm'.Nc.Nd')) =|>     
+	State':= 21
+	/\ SND_R({{Assr'.Np'.Sn.{R.Kr'}_inv(Kca)}_(inv(Km))}_KeyGen(M.Pmsm'.Nc.Nd'))
+	/\ witness(M,P,auth_np,Np')
+	/\ witness(M,P,auth_sn,Sn)
+	/\ request(M,P,auth_idev,Sn) %Authenticating plegde on serialnumber
+	 
  
 end role
 
 
-role session(P, S, M, CA        : agent,
+role session(P, S, M        : agent,
              Kp, Kr, Km, Kca	: public_key,
-			KeyGen, PRF    	: hash_func,
-			Sn      		: text, %serial Number 
-            Issuer    		: text,
-            Aki		: text,  %authorityKeyIdentifier
-            Sln		: text,  %subjectAltName	
-            Msn       		: text,  %MASASerialNumber
-            Maki		: text,  %MASAauthorityKeyIdentifier
-            Mski		: text,  %MASAsubjectKeyIdentifier
-			Msln      		: text%,  %MASAsubjectAltName
+	     KeyGen, PRF    	: hash_func,
+	     Sn      		: text, %serial Number 
+             Issuer    		: text,
+             Aki		: text,  %authorityKeyIdentifier
+             Sln		: text  %subjectAltName	
 	     )
 def=
 
   local SP, SR, SM, RP, RR, RM  : channel (dy)
-	
 
   composition
-	   pledge(P,S,M,CA,Kp,Km,Kca,KeyGen,PRF,Sn,Issuer,Aki,Sln,Msn,Maki,Mski,Msln,SP,RP,SM,RM)
-        /\ registrar(P,S,M,CA,Kr,Km,Kca,KeyGen,PRF,SR,RR,SM,RM)
-		/\ masa(P,S,M,CA,Km,Kp,Kca,KeyGen,PRF,Sn,Issuer,Aki,Sln,Msn,Maki,Mski,Msln,SM,RM,SP,RP)
+	pledge(P,S,M,Kp,Km,Kca,KeyGen,PRF,Sn,Issuer,Aki,Sln,SP,RP,SM,RM)
+	/\ registrar(P,S,M,Kr,Km,Kca,KeyGen,PRF,SR,RR,SM,RM)
+	/\ masa(P,S,M,Km,Kp,Kca,KeyGen,PRF,Sn,Issuer,Aki,Sln,SM,RM,SP,RP)
 
 end role
-
 
 role environment()
 def=
 
-   const p,r,m,ca               : agent,
+   const p,r,m			: agent,
          kp, kr, km, kca, ki    : public_key,
          keygen, prf		: hash_func,
-		 sn      		: text, %serial Number 
+	 sn      		: text, %serial Number 
          issuer    		: text,
          aki			: text,  %authorityKeyIdentifier
-         sln			: text,  %subjectAltName	
-         msn       		: text,  %MASASerialNumber
-         maki			: text,  %MASAauthorityKeyIdentifier
-         mski			: text,  %MASAsubjectKeyIdentifier
-		 msln      		: text  %MASAsubjectAltName
+         sln			: text   %subjectAltName	
 
-   intruder_knowledge = {p,r,m,ca,kp,kr,m,kca,ki,inv(ki)
+   intruder_knowledge = {p,r,m,kp,kr,m,kca,ki,inv(ki)
                         ,{i.ki}_inv(kca)     %%% 2nd session
 %                       ,{i.ki}_inv(kca)     %%% 3rd session
                         }
 
    composition
- 	session(p,r,m,ca,kp,kr,km,kca,keygen,prf,sn,issuer,aki,sln,msn,maki,mski,msln)
-%   /\  session(p,r,m,ca,kp,kr,km,kca,keygen,prf,sn,issuer,aki,sln,msn,maki,mski,msln)
-%   /\	session(p,i,m,ca,kp,ki,km,kca,keygen,prf,sn,issuer,aki,sln,msn,maki,mski,msln)
-%   /\	session(i,r,m,ca,ki,kr,km,kca,keygen,prf,sn,issuer,aki,sln,msn,maki,mski,msln)
-%   /\	session(p,r,i,ca,kp,kr,ki,kca,keygen,prf,sn,issuer,aki,sln,msn,maki,mski,msln)
+ 	session(p,r,m,kp,kr,km,kca,keygen,prf,sn,issuer,aki,sln)
+%   /\  session(p,r,m,kp,kr,km,kca,keygen,prf,sn,issuer,aki,sln)
+%   /\	session(p,i,m,kp,ki,km,kca,keygen,prf,sn,issuer,aki,sln)
+%   /\	session(i,r,m,ki,kr,km,kca,keygen,prf,sn,issuer,aki,sln)
+%   /\	session(p,r,i,kp,kr,ki,kca,keygen,prf,sn,issuer,aki,sln)
 
 
 end role
 
-goal
 
-	secrecy_of sec_np_pr  %secrecy of np																																																									
-	secrecy_of sec_np_rm
-    secrecy_of sec_tls_rm
-	secrecy_of tls_pledgek
-    secrecy_of tls_registrark
-	secrecy_of tls_registrarrmk
-	secrecy_of tls_masarmk
+goal
+																																						
+	secrecy_of sec_np_pr,sec_np_rm %confidentiality of Np	
+	secrecy_of tls_pledgek,tls_registrark,tls_registrarrmk,tls_masarmk
 	authentication_on auth_sn
-	authentication_on auth_reg_cert %Registrar can authenticate pledge on its TLS certificate
-    authentication_on auth_reg_cert1
-	authentication_on auth_reg_cert2
-	authentication_on auth_reg_cert3	
-	authentication_on auth_tls_cert	
+	authentication_on auth_na_nb %Registrar can authenticate pledge on its TLS certificate
+	authentication_on auth_na_nb2        
+	authentication_on auth_reg_cert
+	authentication_on auth_nc_nd	
+	authentication_on auth_nc_nd2
 	authentication_on auth_idev  %Masa can authenticate pledge on serialNumber and subjectkeyidentifier
 	authentication_on auth_reg_certchain %% MASA can check registrar on RegistrarChain
 	authentication_on auth_np  %Registrar authenticates voucher by checking nonce Np.
-    authentication_on auth_np1 %Plegde authenticates voucher by checking nonce Np.
-	authentication_on auth_idevr
+        authentication_on auth_np1 %Plegde authenticates voucher by checking nonce Np.
 
 end goal
 
